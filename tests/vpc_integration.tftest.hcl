@@ -9,14 +9,14 @@ provider "aws" {
 }
 
 variables {
-  name             = "tftest-vpc"
-  vpc_cidr         = "10.99.0.0/16"
-  azs              = ["us-east-1a", "us-east-1b"]
-  public_subnets   = ["10.99.0.0/24", "10.99.1.0/24"]
-  private_subnets  = ["10.99.10.0/24", "10.99.11.0/24"]
-  database_subnets = ["10.99.20.0/24", "10.99.21.0/24"]
-  single_nat_gateway = true  # minimise cost during tests
-  tags = { Environment = "test" }
+  name               = "tftest-vpc"
+  vpc_cidr           = "10.99.0.0/16"
+  azs                = ["us-east-1a", "us-east-1b"]
+  public_subnets     = ["10.99.0.0/24", "10.99.1.0/24"]
+  private_subnets    = ["10.99.10.0/24", "10.99.11.0/24"]
+  database_subnets   = ["10.99.20.0/24", "10.99.21.0/24"]
+  single_nat_gateway = true # minimise cost during tests
+  tags               = { Environment = "test" }
 }
 
 # ── Apply: verify real resource attributes ───────────────────────────────────
