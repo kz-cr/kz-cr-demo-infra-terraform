@@ -1,0 +1,73 @@
+name: Terraform Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write   # required for OIDC auth to AWS (integration tests)
+
+env:
+  TF_VERSION: "1.9.8"
+  AWS_REGION: "us-east-1"
+
+jobs:
+  # ── Job 1: validate + unit tests (no AWS credentials required) ─────────────
+  unit:
+    name: Validate & Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Unit Tests (mock provider — no AWS needed)
+        run: terraform test -filter=tests/vpc_unit.tftest.hcl -verbose
+
+  # ── Job 2: integration tests (requires AWS credentials via OIDC) ───────────
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    # Only run on pushes to main or when the PR label "run-integration" is set.
+    # Remove the `if` to always run (requires AWS secrets to be configured).
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.labels.*.name, 'run-integration')
+    environment: integration  # Gate behind a GitHub environment for approval
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      - name: Integration Tests (creates real AWS resources)
+        run: terraform test -filter=tests/vpc_integration.tftest.hcl -verbose
+        # terraform test automatically destroys resources after each run block.
