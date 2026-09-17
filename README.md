@@ -1,6 +1,6 @@
 # kz-cr-demo-infra-terraform
 
-Terraform configuration for a 3-tier AWS VPC, built as a reusable module with native Terraform test coverage and GitHub Actions CI.
+Terraform configuration for a 3-tier AWS VPC with a public-facing EC2 web server, built as reusable modules with native Terraform test coverage and GitHub Actions CI.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ Internet
 │                                                 │
 │  ┌─────────────────────────────────────────┐   │
 │  │  Tier 1 — Public  (10.0.0-2.0/24)      │   │
-│  │  Load balancers, bastion hosts          │   │
+│  │  EC2 web server (HTTP/HTTPS)            │   │
 │  │  Route: → Internet Gateway              │   │
 │  └──────────────────┬──────────────────────┘   │
 │                     │ NAT Gateway               │
@@ -37,15 +37,19 @@ All three tiers span 3 Availability Zones by default. The database tier has no i
 
 ```
 .
-├── main.tf                        # Provider + root module call
+├── main.tf                        # Provider + root module calls
 ├── variables.tf                   # Input variables
 ├── outputs.tf                     # Root outputs
 ├── versions.tf                    # Terraform & provider version pins
 ├── terraform.tfvars.example       # Example values — copy to terraform.tfvars
 ├── modules/
-│   └── vpc/
-│       ├── main.tf                # All VPC resources
-│       ├── variables.tf           # Module inputs (with validation)
+│   ├── vpc/
+│   │   ├── main.tf                # All VPC resources
+│   │   ├── variables.tf           # Module inputs (with validation)
+│   │   └── outputs.tf             # Module outputs
+│   └── ec2/
+│       ├── main.tf                # EC2 instance, SG, IAM role, CloudWatch logs
+│       ├── variables.tf           # Module inputs
 │       └── outputs.tf             # Module outputs
 └── tests/
     ├── vpc_unit.tftest.hcl        # Mock-provider unit tests (no AWS needed)
@@ -80,11 +84,15 @@ terraform apply
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `region` | `us-east-1` | AWS region |
+| `region` | `ap-southeast-1` | AWS region |
 | `name` | `kz-cr-demo` | Name prefix for all resources |
 | `vpc_cidr` | `10.0.0.0/16` | VPC CIDR block |
-| `azs` | 3 AZs in us-east-1 | Availability zones |
+| `azs` | 3 AZs in ap-southeast-1 | Availability zones |
 | `single_nat_gateway` | `false` | `true` = one shared NAT GW (saves cost in non-prod) |
+| `ec2_instance_type` | `t3.micro` | Instance type for the web server |
+| `ec2_ami_id` | `""` | AMI ID — leave empty to use latest Amazon Linux 2023 |
+| `ec2_key_name` | `""` | EC2 key pair for SSH — leave empty to disable SSH |
+| `log_retention_days` | `30` | CloudWatch log retention for EC2 log groups |
 
 ## Tests
 
@@ -130,6 +138,8 @@ GitHub Actions runs two jobs on every push/PR to `main`:
 
 ## What gets created
 
+### VPC module
+
 | Resource | Count | Notes |
 |----------|-------|-------|
 | VPC | 1 | DNS hostnames + support enabled |
@@ -142,3 +152,16 @@ GitHub Actions runs two jobs on every push/PR to `main`:
 | Route tables | public + private + database | |
 | RDS DB Subnet Group | 1 | Spans all database subnets |
 | VPC Flow Logs | 1 | 30-day CloudWatch retention |
+
+### EC2 module
+
+| Resource | Count | Notes |
+|----------|-------|-------|
+| EC2 instance | 1 | Amazon Linux 2023, public subnet, public IP assigned |
+| Security group | 1 | Ingress 80 + 443 from `0.0.0.0/0`; unrestricted egress |
+| IAM role + instance profile | 1 | `CloudWatchAgentServerPolicy` attached |
+| CloudWatch log group `/ec2/<name>/system` | 1 | `/var/log/messages` + cloud-init output |
+| CloudWatch log group `/ec2/<name>/app` | 1 | `/var/log/app/*.log` |
+| EBS root volume | 1 | 20 GB gp3, encrypted |
+
+The CloudWatch Agent is installed and started via `user_data` on first boot. IMDSv2 is enforced (`http_tokens = required`).
