@@ -1,7 +1,7 @@
 variable "region" {
   description = "AWS region to deploy into"
   type        = string
-  default     = "us-east-1"
+  default     = "ap-southeast-1"
 }
 
 variable "name" {
@@ -19,7 +19,7 @@ variable "vpc_cidr" {
 variable "azs" {
   description = "Availability zones (must match the number of subnet CIDRs)"
   type        = list(string)
-  default     = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  default     = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
 }
 
 variable "public_subnets" {
