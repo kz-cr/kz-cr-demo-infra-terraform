@@ -1,17 +1,24 @@
 # Copy to terraform.tfvars and adjust as needed.
 
-region = "us-east-1"
+region = "ap-southeast-1"
 name   = "kz-cr-demo"
 
 vpc_cidr = "10.0.0.0/16"
 
-azs              = ["us-east-1a", "us-east-1b", "us-east-1c"]
+azs              = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
 public_subnets   = ["10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24"]
 private_subnets  = ["10.0.10.0/24", "10.0.11.0/24", "10.0.12.0/24"]
 database_subnets = ["10.0.20.0/24", "10.0.21.0/24", "10.0.22.0/24"]
 
 # Set to true in non-production environments to save on NAT gateway costs.
 single_nat_gateway = false
+
+# EC2 web server
+ec2_instance_type = "t3.micro"
+ec2_ami_id        = "" # Leave empty to use the latest Amazon Linux 2023
+ec2_key_name      = "" # Leave empty to disable SSH access
+
+log_retention_days = 30
 
 tags = {
   Environment = "production"

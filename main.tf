@@ -26,3 +26,18 @@ module "vpc" {
 
   tags = var.tags
 }
+
+module "ec2" {
+  source = "./modules/ec2"
+
+  name      = "${var.name}-web"
+  vpc_id    = module.vpc.vpc_id
+  subnet_id = module.vpc.public_subnet_ids[0]
+
+  instance_type      = var.ec2_instance_type
+  ami_id             = var.ec2_ami_id
+  key_name           = var.ec2_key_name
+  log_retention_days = var.log_retention_days
+
+  tags = var.tags
+}
