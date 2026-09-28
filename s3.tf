@@ -1,10 +1,6 @@
-provider "aws" {
-  region = "us-east-1"
-}
-
 # 1. Create the S3 Bucket
 resource "aws_s3_bucket" "public_bucket" {
-  bucket        = "my-unique-public-bucket-name"
+  bucket        = "${var.name}-s3-bucket"
   force_destroy = true
 }
 
