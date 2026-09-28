@@ -51,3 +51,27 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "ec2_instance_type" {
+  description = "EC2 instance type for the web server"
+  type        = string
+  default     = "t3.micro"
+}
+
+variable "ec2_ami_id" {
+  description = "AMI ID — leave empty to auto-resolve latest Amazon Linux 2023"
+  type        = string
+  default     = ""
+}
+
+variable "ec2_key_name" {
+  description = "EC2 key pair name for SSH access — leave empty to disable"
+  type        = string
+  default     = ""
+}
+
+variable "log_retention_days" {
+  description = "CloudWatch log group retention in days"
+  type        = number
+  default     = 30
+}
