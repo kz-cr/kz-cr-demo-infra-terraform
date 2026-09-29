@@ -116,7 +116,7 @@ install_file() {
 
     # ── Compressed tarballs ───────────────────────────────────────────────────
     *.tar.gz|*.tgz|*.tar.bz2|*.tar.xz)
-      local ext_dir="$EXTRACT_DIR/$${filename%%.*}"
+      local ext_dir="$EXTRACT_DIR/${filename%%.*}"
       mkdir -p "$ext_dir"
       log "  → extracting to $ext_dir"
       tar --extract --file "$file" --directory "$ext_dir" --strip-components=1 2>/dev/null \
@@ -126,7 +126,7 @@ install_file() {
 
     # ── Zip archives ──────────────────────────────────────────────────────────
     *.zip)
-      local ext_dir="$EXTRACT_DIR/$${filename%.zip}"
+      local ext_dir="$EXTRACT_DIR/${filename%.zip}"
       mkdir -p "$ext_dir"
       log "  → extracting to $ext_dir"
       unzip -q -o "$file" -d "$ext_dir"
@@ -153,9 +153,9 @@ install_file() {
       if [[ "$mime" == "application/x-executable" ]] \
         || [[ "$mime" == "application/x-pie-executable" ]] \
         || file --brief "$file" | grep -q "ELF"; then
-        log "  → ELF binary → /usr/local/bin/$${filename%.bin}"
+        log "  → ELF binary → /usr/local/bin/${filename%.bin}"
         chmod +x "$file"
-        install -m 0755 "$file" "/usr/local/bin/$${filename%.bin}"
+        install -m 0755 "$file" "/usr/local/bin/${filename%.bin}"
       else
         log "  → unrecognised type ($mime) — skipping $filename"
       fi
