@@ -26,3 +26,22 @@ module "vpc" {
 
   tags = var.tags
 }
+
+module "ec2" {
+  source = "./modules/ec2"
+
+  name      = var.name
+  vpc_id    = module.vpc.vpc_id
+  subnet_id = module.vpc.public_subnet_ids[0]
+
+  instance_type = var.ec2_instance_type
+  ami_id        = var.ec2_ami_id
+  key_name      = var.ec2_key_name
+
+  s3_bucket_name = aws_s3_bucket.public_bucket.bucket
+  s3_bucket_arn  = aws_s3_bucket.public_bucket.arn
+
+  log_retention_days = var.log_retention_days
+
+  tags = var.tags
+}
