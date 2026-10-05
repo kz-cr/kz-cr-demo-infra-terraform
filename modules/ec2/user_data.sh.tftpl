@@ -1,0 +1,215 @@
+#!/bin/bash
+set -euo pipefail
+exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+INSTANCE_NAME="${name}"
+S3_BUCKET="${s3_bucket_name}"
+REGION="${region}"
+DOWNLOAD_DIR="/opt/packages"
+EXTRACT_DIR="$DOWNLOAD_DIR/.extracted"
+MANIFEST_FILE="install-manifest.txt"
+LOG_TAG="bootstrap"
+
+log() { echo "[$LOG_TAG] $*"; }
+
+# ── Prerequisites ─────────────────────────────────────────────────────────────
+log "Installing prerequisites"
+dnf install -y unzip file python3 tar gzip
+
+# ── CloudWatch Agent ──────────────────────────────────────────────────────────
+log "Installing CloudWatch agent"
+dnf install -y amazon-cloudwatch-agent
+
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'CW_EOF'
+{
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/messages",
+            "log_group_name": "${cw_system_log}",
+            "log_stream_name": "{instance_id}/messages",
+            "timestamp_format": "%b %d %H:%M:%S"
+          },
+          {
+            "file_path": "/var/log/cloud-init-output.log",
+            "log_group_name": "${cw_system_log}",
+            "log_stream_name": "{instance_id}/cloud-init"
+          },
+          {
+            "file_path": "/var/log/user-data.log",
+            "log_group_name": "${cw_system_log}",
+            "log_stream_name": "{instance_id}/user-data"
+          },
+          {
+            "file_path": "/var/log/app/*.log",
+            "log_group_name": "${cw_app_log}",
+            "log_stream_name": "{instance_id}/{filename}"
+          }
+        ]
+      }
+    }
+  }
+}
+CW_EOF
+
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+
+log "CloudWatch agent started"
+
+# ── S3 sync ───────────────────────────────────────────────────────────────────
+log "Syncing s3://$S3_BUCKET → $DOWNLOAD_DIR"
+mkdir -p "$DOWNLOAD_DIR" "$EXTRACT_DIR" /var/log/app
+aws s3 sync "s3://$S3_BUCKET" "$DOWNLOAD_DIR" \
+  --region "$REGION" \
+  --no-progress \
+  --exact-timestamps
+
+log "Sync complete. Listing downloaded files:"
+find "$DOWNLOAD_DIR" -not -path "$EXTRACT_DIR/*" -type f | sort | while read -r f; do
+  log "  $f"
+done
+
+# ── Binary installer ──────────────────────────────────────────────────────────
+
+# install_file detects the type of a single file and runs the appropriate installer.
+install_file() {
+  local file="$1"
+  local filename
+  filename=$(basename "$file")
+
+  # Skip the manifest itself
+  [[ "$filename" == "$MANIFEST_FILE" ]] && return 0
+
+  log "Processing: $file"
+
+  case "$filename" in
+
+    # ── RPM package ───────────────────────────────────────────────────────────
+    *.rpm)
+      log "  → dnf install (RPM)"
+      dnf install -y "$file"
+      ;;
+
+    # ── Debian package (best-effort via alien) ────────────────────────────────
+    *.deb)
+      log "  → converting .deb with alien then installing"
+      if ! command -v alien &>/dev/null; then
+        log "  alien not found — skipping $filename (not supported on AL2023)"
+        return 0
+      fi
+      local rpm_out
+      rpm_out=$(alien --to-rpm --scripts "$file" 2>&1 | grep -oP '[\w./-]+\.rpm' | head -1)
+      if [[ -n "$rpm_out" ]]; then
+        dnf install -y "$rpm_out"
+      fi
+      ;;
+
+    # ── Python wheel ─────────────────────────────────────────────────────────
+    *.whl)
+      log "  → pip3 install (wheel)"
+      pip3 install --upgrade "$file"
+      ;;
+
+    # ── Compressed tarballs ───────────────────────────────────────────────────
+    *.tar.gz|*.tgz|*.tar.bz2|*.tar.xz)
+      local ext_dir="$EXTRACT_DIR/$${filename%%.*}"
+      mkdir -p "$ext_dir"
+      log "  → extracting to $ext_dir"
+      tar --extract --file "$file" --directory "$ext_dir" --strip-components=1 2>/dev/null \
+        || tar --extract --file "$file" --directory "$ext_dir"
+      _run_install_script "$ext_dir" "$filename"
+      ;;
+
+    # ── Zip archives ──────────────────────────────────────────────────────────
+    *.zip)
+      local ext_dir="$EXTRACT_DIR/$${filename%.zip}"
+      mkdir -p "$ext_dir"
+      log "  → extracting to $ext_dir"
+      unzip -q -o "$file" -d "$ext_dir"
+      _run_install_script "$ext_dir" "$filename"
+      ;;
+
+    # ── Shell scripts ─────────────────────────────────────────────────────────
+    *.sh|*.bash)
+      log "  → bash"
+      chmod +x "$file"
+      bash "$file"
+      ;;
+
+    # ── Python scripts ────────────────────────────────────────────────────────
+    *.py)
+      log "  → python3"
+      python3 "$file"
+      ;;
+
+    # ── Standalone binaries (.bin or no extension) ────────────────────────────
+    *.bin|*)
+      local mime
+      mime=$(file --brief --mime-type "$file")
+      if [[ "$mime" == "application/x-executable" ]] \
+        || [[ "$mime" == "application/x-pie-executable" ]] \
+        || file --brief "$file" | grep -q "ELF"; then
+        log "  → ELF binary → /usr/local/bin/$${filename%.bin}"
+        chmod +x "$file"
+        install -m 0755 "$file" "/usr/local/bin/$${filename%.bin}"
+      else
+        log "  → unrecognised type ($mime) — skipping $filename"
+      fi
+      ;;
+  esac
+}
+
+# _run_install_script looks inside an extracted archive for an installer.
+_run_install_script() {
+  local dir="$1"
+  local src_name="$2"
+
+  if [[ -f "$dir/install.sh" ]]; then
+    log "  → running install.sh inside $src_name"
+    chmod +x "$dir/install.sh"
+    bash "$dir/install.sh"
+  elif [[ -f "$dir/Makefile" ]]; then
+    log "  → running make install inside $src_name"
+    make -C "$dir" install
+  else
+    # Copy any ELF executables at the root of the archive to /usr/local/bin
+    find "$dir" -maxdepth 1 -type f | while read -r inner; do
+      if file --brief "$inner" | grep -q "ELF"; then
+        local bname
+        bname=$(basename "$inner")
+        log "  → ELF in archive → /usr/local/bin/$bname"
+        chmod +x "$inner"
+        install -m 0755 "$inner" "/usr/local/bin/$bname"
+      fi
+    done
+  fi
+}
+
+# ── Ordered or auto-discovery install ─────────────────────────────────────────
+
+MANIFEST="$DOWNLOAD_DIR/$MANIFEST_FILE"
+
+if [[ -f "$MANIFEST" ]]; then
+  log "Found $MANIFEST_FILE — installing in declared order"
+  # Each non-blank, non-comment line is a path relative to DOWNLOAD_DIR
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    target="$DOWNLOAD_DIR/$line"
+    if [[ -f "$target" ]]; then
+      install_file "$target"
+    else
+      log "WARNING: $target listed in manifest but not found — skipping"
+    fi
+  done < "$MANIFEST"
+else
+  log "No $MANIFEST_FILE found — auto-discovering and installing all files"
+  find "$DOWNLOAD_DIR" -not -path "$EXTRACT_DIR/*" -type f | sort | while read -r f; do
+    install_file "$f"
+  done
+fi
+
+log "Bootstrap complete for $INSTANCE_NAME"
